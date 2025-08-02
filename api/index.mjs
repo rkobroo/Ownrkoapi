@@ -149,41 +149,8 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Rate limiting for Vercel
-const rateLimits = new Map();
-const RATE_LIMIT = 100; // requests per hour
-const RATE_WINDOW = 60 * 60 * 1000; // 1 hour in milliseconds
-
-const rateLimit = (req, res, next) => {
-  const clientIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection.remoteAddress || 'unknown';
-  const now = Date.now();
-  
-  let clientLimit = rateLimits.get(clientIp);
-  if (!clientLimit || now - clientLimit.resetTime > RATE_WINDOW) {
-    clientLimit = { count: 0, resetTime: now };
-    rateLimits.set(clientIp, clientLimit);
-  }
-  
-  if (clientLimit.count >= RATE_LIMIT) {
-    return res.status(429).json({
-      status: "error",
-      error: {
-        code: 429,
-        message: "Rate limit exceeded",
-        details: "You have exceeded the maximum number of requests per hour. Please try again later."
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-  
-  clientLimit.count++;
-  rateLimits.set(clientIp, clientLimit);
-  res.set('X-RateLimit-Remaining', (RATE_LIMIT - clientLimit.count).toString());
-  next();
-};
-
 // Video metadata extraction endpoint
-app.get("/rko/alldl", rateLimit, async (req, res) => {
+app.get("/rko/alldl", async (req, res) => {
   const startTime = Date.now();
   
   try {

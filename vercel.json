@@ -2,30 +2,31 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/server.js",
-      "use": "@vercel/node"
+      "src": "server/index.ts",
+      "use": "@vercel/node",
+      "config": { "includeFiles": ["server/**"] }
     },
     {
-      "src": "client/package.json",
+      "src": "package.json",
       "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/api/server.js"
+      "dest": "/server/index.ts"
     },
     {
       "src": "/rko/alldl",
-      "dest": "/api/server.js"
+      "dest": "/server/index.ts"
     },
     {
       "src": "/download/(.*)",
-      "dest": "/api/server.js"
+      "dest": "/server/index.ts"
     },
     {
       "src": "/(.*)",
-      "dest": "/client/dist/$1"
+      "dest": "/dist/$1"
     }
   ],
   "headers": [

@@ -1,52 +1,23 @@
 
 {
   "version": 2,
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist/public",
   "functions": {
-    "api/index.js": {
+    "api/index.mjs": {
       "maxDuration": 30
     }
   },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/rko/alldl",
-      "dest": "/api/index.js"
+      "source": "/rko/alldl",
+      "destination": "/api"
     },
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
-      "src": "/download/(.*)",
-      "dest": "/api/index.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
-  ],
-  "headers": [
     {
       "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type"
-        }
-      ]
+      "destination": "/api"
+    },
+    {
+      "source": "/download/(.*)",
+      "destination": "/api"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production",
-    "VERCEL": "1"
-  }
+  ]
 }

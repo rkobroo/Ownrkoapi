@@ -1,27 +1,28 @@
 
-// Vercel serverless function entry point
 import express from 'express';
+import { z } from 'zod';
 import ytdl from 'ytdl-core';
 import fetch from 'node-fetch';
-import { z } from 'zod';
 
-// Inline implementations for Vercel deployment
+// VideoExtractor class
 class VideoExtractor {
   static SUPPORTED_PLATFORMS = [
-    'youtube.com',
-    'youtu.be',
-    'tiktok.com',
-    'instagram.com',
-    'twitter.com',
-    'x.com',
-    'facebook.com'
+    "youtube.com",
+    "youtu.be", 
+    "tiktok.com",
+    "vt.tiktok.com",
+    "vm.tiktok.com",
+    "instagram.com",
+    "twitter.com",
+    "x.com",
+    "facebook.com"
   ];
 
   static validateUrl(url) {
     try {
       const urlObj = new URL(url);
-      return this.SUPPORTED_PLATFORMS.some(domain => 
-        urlObj.hostname.includes(domain)
+      return this.SUPPORTED_PLATFORMS.some(
+        (domain) => urlObj.hostname.includes(domain)
       );
     } catch {
       return false;
@@ -30,116 +31,304 @@ class VideoExtractor {
 
   static detectPlatform(url) {
     const urlObj = new URL(url);
-    
-    if (urlObj.hostname.includes('youtube.com') || urlObj.hostname.includes('youtu.be')) {
-      return 'youtube';
+    if (urlObj.hostname.includes("youtube.com") || urlObj.hostname.includes("youtu.be")) {
+      return "youtube";
     }
-    if (urlObj.hostname.includes('tiktok.com')) {
-      return 'tiktok';
+    if (urlObj.hostname.includes("tiktok.com") || urlObj.hostname.includes("vt.tiktok.com") || urlObj.hostname.includes("vm.tiktok.com")) {
+      return "tiktok";
     }
-    if (urlObj.hostname.includes('instagram.com')) {
-      return 'instagram';
+    if (urlObj.hostname.includes("instagram.com")) {
+      return "instagram";
     }
-    if (urlObj.hostname.includes('twitter.com') || urlObj.hostname.includes('x.com')) {
-      return 'twitter';
+    if (urlObj.hostname.includes("twitter.com") || urlObj.hostname.includes("x.com")) {
+      return "twitter";
     }
-    if (urlObj.hostname.includes('facebook.com')) {
-      return 'facebook';
+    if (urlObj.hostname.includes("facebook.com")) {
+      return "facebook";
     }
-    
-    return 'unknown';
+    return "unknown";
   }
 
   static async extractVideoInfo(url) {
     const platform = this.detectPlatform(url);
-    
     switch (platform) {
-      case 'youtube':
+      case "youtube":
         return this.extractYouTubeInfo(url);
-      case 'tiktok':
+      case "tiktok":
         return this.extractTikTokInfo(url);
+      case "instagram":
+        return this.extractInstagramInfo(url);
+      case "twitter":
+        return this.extractTwitterInfo(url);
+      case "facebook":
+        return this.extractFacebookInfo(url);
       default:
-        throw new Error(`Platform ${platform} is not yet implemented`);
+        throw new Error(`Unsupported platform: ${platform}`);
     }
   }
 
   static async extractYouTubeInfo(url) {
+    const videoId = this.extractYouTubeVideoId(url);
+    if (!videoId) {
+      throw new Error("Invalid YouTube URL");
+    }
     try {
-      const info = await ytdl.getInfo(url);
-      const videoDetails = info.videoDetails;
+      const videoInfo = await this.fetchYouTubeMetadata(videoId);
+      return videoInfo;
+    } catch (error) {
+      throw new Error(`Failed to extract YouTube video info: ${error.message}`);
+    }
+  }
+
+  static extractYouTubeVideoId(url) {
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/,
+      /youtube\.com\/embed\/([^&\n?#]+)/,
+      /youtube\.com\/v\/([^&\n?#]+)/
+    ];
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match) return match[1];
+    }
+    return null;
+  }
+
+  static async fetchYouTubeMetadata(videoId) {
+    try {
+      console.log(`[DEBUG] Attempting ytdl-core for video ID: ${videoId}`);
+      const info = await ytdl.getInfo(videoId);
+      const details = info.videoDetails;
+      const durationSeconds = parseInt(details.lengthSeconds || "0");
+      const minutes = Math.floor(durationSeconds / 60);
+      const seconds = durationSeconds % 60;
+      const duration = `${minutes}:${seconds.toString().padStart(2, "0")}`;
       
+      const thumbnails = details.thumbnails || [];
+      const bestThumbnail = thumbnails.reduce((best, current) => {
+        return (current.width || 0) > (best.width || 0) ? current : best;
+      }, thumbnails[0] || { 
+        url: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, 
+        width: 1280, 
+        height: 720 
+      });
+
       return {
-        platform: 'youtube',
-        videoId: videoDetails.videoId,
-        title: videoDetails.title,
-        description: videoDetails.description || 'No description available',
-        duration: this.formatDuration(parseInt(videoDetails.lengthSeconds)),
-        durationSeconds: parseInt(videoDetails.lengthSeconds),
+        platform: "youtube",
+        videoId,
+        title: details.title || "Untitled Video",
+        description: details.description || "No description available",
+        duration,
+        durationSeconds,
         thumbnail: {
-          url: videoDetails.thumbnails[0]?.url || '',
-          width: videoDetails.thumbnails[0]?.width || 0,
-          height: videoDetails.thumbnails[0]?.height || 0
+          url: bestThumbnail.url,
+          width: bestThumbnail.width || 1280,
+          height: bestThumbnail.height || 720
         },
         author: {
-          name: videoDetails.author.name,
-          url: videoDetails.author.channel_url
+          name: details.author?.name || details.ownerChannelName || "Unknown Channel",
+          url: details.author?.channel_url || details.ownerProfileUrl || `https://www.youtube.com/channel/${details.channelId || "unknown"}`
         },
-        uploadDate: videoDetails.publishDate,
-        viewCount: parseInt(videoDetails.viewCount) || 0
+        uploadDate: details.publishDate || new Date().toISOString().split("T")[0],
+        viewCount: parseInt(details.viewCount || "0")
       };
     } catch (error) {
-      throw new Error('Failed to extract YouTube video information');
+      try {
+        const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+        if (response.ok) {
+          const data = await response.json();
+          return {
+            platform: "youtube",
+            videoId,
+            title: data.title || "Untitled Video",
+            description: "Description not available from oEmbed API",
+            duration: "Unknown",
+            durationSeconds: 0,
+            thumbnail: {
+              url: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+              width: data.thumbnail_width || 1280,
+              height: data.thumbnail_height || 720
+            },
+            author: {
+              name: data.author_name || "Unknown Channel",
+              url: data.author_url || `https://www.youtube.com/watch?v=${videoId}`
+            },
+            uploadDate: new Date().toISOString().split("T")[0],
+            viewCount: 0
+          };
+        }
+      } catch (oembedError) {
+        // Fallback failed
+      }
+      throw new Error(`Failed to fetch YouTube metadata: ${error.message}`);
     }
   }
 
   static async extractTikTokInfo(url) {
     try {
-      // Extract video ID from TikTok URL
-      let videoId = '';
-      const urlObj = new URL(url);
+      console.log(`[DEBUG] Processing TikTok URL: ${url}`);
+      let finalUrl = url;
       
-      if (urlObj.hostname.includes('vt.tiktok.com')) {
-        // Handle short URLs by extracting the path
-        videoId = urlObj.pathname.substring(1);
-      } else {
-        // Handle regular TikTok URLs
-        const pathParts = urlObj.pathname.split('/');
-        videoId = pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2];
+      if (url.includes("vt.tiktok.com")) {
+        try {
+          console.log(`[DEBUG] Resolving TikTok short URL: ${url}`);
+          const response = await fetch(url, {
+            method: "HEAD",
+            redirect: "follow",
+            headers: { 
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" 
+            }
+          });
+          finalUrl = response.url || url;
+          console.log(`[DEBUG] Resolved to: ${finalUrl}`);
+        } catch (redirectError) {
+          console.log(`[DEBUG] Failed to resolve redirect, using original URL`);
+        }
       }
 
+      const patterns = [
+        /(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/t\/)(\d+)/,
+        /vm\.tiktok\.com\/([A-Za-z0-9]+)/,
+        /vt\.tiktok\.com\/([A-Za-z0-9]+)/
+      ];
+      
+      let videoId = "unknown";
+      for (const pattern of patterns) {
+        const match = finalUrl.match(pattern);
+        if (match) {
+          videoId = match[1];
+          break;
+        }
+      }
+      
+      if (videoId === "unknown" && url !== finalUrl) {
+        const shortMatch = url.match(/(?:vt|vm)\.tiktok\.com\/([A-Za-z0-9]+)/);
+        if (shortMatch) {
+          videoId = shortMatch[1];
+        }
+      }
+
+      console.log(`[DEBUG] Extracted TikTok video ID: ${videoId}`);
+
       return {
-        platform: 'tiktok',
-        videoId: videoId,
+        platform: "tiktok",
+        videoId,
         title: `TikTok Video (${videoId})`,
-        description: 'TikTok video description not available via API',
-        duration: 'Unknown',
+        description: "TikTok video content - full metadata extraction requires special API access",
+        duration: "Unknown",
         durationSeconds: 0,
         thumbnail: {
-          url: '',
-          width: 0,
-          height: 0
+          url: "https://via.placeholder.com/720x720/000000/FFFFFF?text=TikTok+Video",
+          width: 720,
+          height: 720
         },
         author: {
-          name: 'TikTok User',
-          url: ''
+          name: "TikTok User",
+          url: finalUrl
         },
-        uploadDate: new Date().toISOString(),
+        uploadDate: new Date().toISOString().split("T")[0],
         viewCount: 0
       };
     } catch (error) {
-      throw new Error('Failed to extract TikTok video information');
+      console.error(`[ERROR] TikTok extraction failed:`, error.message);
+      throw new Error(`Failed to extract TikTok video info: ${error.message}`);
     }
   }
 
-  static formatDuration(seconds) {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  static async extractInstagramInfo(url) {
+    try {
+      const match = url.match(/instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+      const videoId = match ? match[1] : "unknown";
+      
+      const response = await fetch(`https://graph.facebook.com/v8.0/instagram_oembed?url=${encodeURIComponent(url)}&access_token=guest`);
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          platform: "instagram",
+          videoId,
+          title: data.title || "Instagram Video",
+          description: "Instagram video content",
+          duration: "Unknown",
+          durationSeconds: 0,
+          thumbnail: {
+            url: data.thumbnail_url || "https://via.placeholder.com/640x640?text=Instagram+Video",
+            width: data.thumbnail_width || 640,
+            height: data.thumbnail_height || 640
+          },
+          author: {
+            name: data.author_name || "Instagram User",
+            url: data.author_url || url
+          },
+          uploadDate: new Date().toISOString().split("T")[0],
+          viewCount: 0
+        };
+      }
+      throw new Error("Failed to fetch Instagram oEmbed data");
+    } catch (error) {
+      throw new Error(`Failed to extract Instagram video info: ${error.message}`);
     }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  static async extractTwitterInfo(url) {
+    try {
+      const match = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
+      const videoId = match ? match[1] : "unknown";
+      
+      const response = await fetch(`https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}`);
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          platform: "twitter",
+          videoId,
+          title: "Twitter Video",
+          description: data.html ? data.html.replace(/<[^>]*>/g, "").substring(0, 200) : "Twitter video content",
+          duration: "Unknown",
+          durationSeconds: 0,
+          thumbnail: {
+            url: "https://via.placeholder.com/640x360?text=Twitter+Video",
+            width: 640,
+            height: 360
+          },
+          author: {
+            name: data.author_name || "Twitter User",
+            url: data.author_url || url
+          },
+          uploadDate: new Date().toISOString().split("T")[0],
+          viewCount: 0
+        };
+      }
+      throw new Error("Failed to fetch Twitter oEmbed data");
+    } catch (error) {
+      throw new Error(`Failed to extract Twitter video info: ${error.message}`);
+    }
+  }
+
+  static async extractFacebookInfo(url) {
+    try {
+      const match = url.match(/facebook\.com\/(?:watch\/?\?v=|.*\/videos\/)(\d+)/);
+      const videoId = match ? match[1] : "unknown";
+      
+      return {
+        platform: "facebook",
+        videoId,
+        title: "Facebook Video",
+        description: "Facebook video content",
+        duration: "Unknown",
+        durationSeconds: 0,
+        thumbnail: {
+          url: "https://via.placeholder.com/640x360?text=Facebook+Video",
+          width: 640,
+          height: 360
+        },
+        author: {
+          name: "Facebook User",
+          url
+        },
+        uploadDate: new Date().toISOString().split("T")[0],
+        viewCount: 0
+      };
+    } catch (error) {
+      throw new Error(`Failed to extract Facebook video info: ${error.message}`);
+    }
   }
 
   static generateDownloadLinks(videoInfo) {
@@ -160,6 +349,7 @@ class VideoExtractor {
   }
 }
 
+// AISummaryService class
 class AISummaryService {
   static async generateSummary(title, description) {
     // Fallback to simple text processing when OpenAI is unavailable

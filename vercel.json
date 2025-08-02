@@ -9,15 +9,15 @@
   "rewrites": [
     {
       "source": "/rko/alldl",
-      "destination": "/api"
+      "destination": "/api/index.mjs"
     },
     {
       "source": "/api/(.*)",
-      "destination": "/api"
+      "destination": "/api/index.mjs"
     },
     {
       "source": "/download/(.*)",
-      "destination": "/api"
+      "destination": "/api/index.mjs"
     }
   ]
 }

@@ -7,7 +7,7 @@
       "use": "@vercel/node"
     },
     {
-      "src": "client/**/*",
+      "src": "package.json",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "dist"
@@ -15,6 +15,10 @@
     }
   ],
   "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/server.js"
+    },
     {
       "src": "/rko/alldl",
       "dest": "/api/server.js"
@@ -26,6 +30,30 @@
     {
       "src": "/(.*)",
       "dest": "/dist/$1"
+    }
+  ],
+  "functions": {
+    "api/server.js": {
+      "maxDuration": 30
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type"
+        }
+      ]
     }
   ],
   "env": {

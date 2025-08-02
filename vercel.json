@@ -7,11 +7,8 @@
       "use": "@vercel/node"
     },
     {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
+      "src": "client/index.html",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -29,7 +26,7 @@
     },
     {
       "src": "/(.*)",
-      "dest": "/dist/$1"
+      "dest": "/client/$1"
     }
   ],
   "functions": {

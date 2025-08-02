@@ -592,4 +592,7 @@ app.get('/', (req, res) => {
   });
 });
 
-export default app;
+// For Vercel serverless functions
+export default (req, res) => {
+  return app(req, res);
+};

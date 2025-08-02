@@ -6,45 +6,10 @@ import { AISummaryService } from "./services/aiSummary";
 import { videoMetadataSchema, apiErrorSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Rate limiting store (in production, use Redis)
-  const rateLimits = new Map<string, { count: number; resetTime: number }>();
-  const RATE_LIMIT = 100; // requests per hour
-  const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour in milliseconds
-
-  // Rate limiting middleware
-  const rateLimit = (req: any, res: any, next: any) => {
-    const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
-    const now = Date.now();
-    
-    const clientLimit = rateLimits.get(clientIp);
-    
-    if (!clientLimit || now > clientLimit.resetTime) {
-      rateLimits.set(clientIp, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-      res.set('X-RateLimit-Remaining', (RATE_LIMIT - 1).toString());
-      return next();
-    }
-    
-    if (clientLimit.count >= RATE_LIMIT) {
-      return res.status(429).json({
-        status: "error",
-        error: {
-          code: 429,
-          message: "Rate limit exceeded",
-          details: "You have exceeded the maximum number of requests per hour. Please try again later."
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    clientLimit.count++;
-    rateLimits.set(clientIp, clientLimit);
-    res.set('X-RateLimit-Remaining', (RATE_LIMIT - clientLimit.count).toString());
-    next();
-  };
-
   // Video metadata extraction endpoint
-  app.get("/rko/alldl", rateLimit, async (req, res) => {
+  app.get("/rko/alldl", async (req, res) => {
     const startTime = Date.now();
+    console.log(`[REQUEST] ${req.method} ${req.url} - Query:`, req.query);
     
     try {
       // Validate URL parameter
@@ -70,8 +35,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Extract video information
       let videoInfo;
       try {
+        console.log(`[DEBUG] Extracting video info for URL: ${url}`);
         videoInfo = await VideoExtractor.extractVideoInfo(url);
+        console.log(`[DEBUG] Video extraction successful for: ${videoInfo.title}`);
       } catch (error: any) {
+        console.error(`[ERROR] Video extraction failed for URL: ${url}`, error.message);
+        
         if (error.message && error.message.includes('not yet implemented')) {
           return res.status(503).json({
             status: "error",
@@ -89,17 +58,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: {
             code: 404,
             message: "Video not found",
-            details: "The video could not be found or may be private/deleted."
+            details: `The video could not be found or may be private/deleted. Error: ${error.message}`
           },
           timestamp: new Date().toISOString()
         });
       }
 
-      // Generate AI summary and main points
-      const [mainPoints, aiSummary] = await Promise.all([
-        AISummaryService.generateMainPoints(videoInfo.title, videoInfo.description),
-        AISummaryService.generateSummary(videoInfo.title, videoInfo.description)
-      ]);
+      // Generate AI summary and main points (with fallback for quota issues)
+      let mainPoints, aiSummary;
+      try {
+        [mainPoints, aiSummary] = await Promise.all([
+          AISummaryService.generateMainPoints(videoInfo.title, videoInfo.description),
+          AISummaryService.generateSummary(videoInfo.title, videoInfo.description)
+        ]);
+      } catch (aiError: any) {
+        console.log(`[INFO] AI features temporarily unavailable: ${aiError.message}`);
+        mainPoints = ["AI analysis temporarily unavailable", "Please check your OpenAI API credits"];
+        aiSummary = "AI summary temporarily unavailable. Video downloading is fully functional.";
+      }
 
       // Generate download links
       const downloadLinks = VideoExtractor.generateDownloadLinks(videoInfo);

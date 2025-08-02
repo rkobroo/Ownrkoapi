@@ -27,6 +27,8 @@ export class VideoExtractor {
     'youtube.com',
     'youtu.be',
     'tiktok.com',
+    'vt.tiktok.com',
+    'vm.tiktok.com',
     'instagram.com',
     'twitter.com',
     'x.com',
@@ -50,7 +52,7 @@ export class VideoExtractor {
     if (urlObj.hostname.includes('youtube.com') || urlObj.hostname.includes('youtu.be')) {
       return 'youtube';
     }
-    if (urlObj.hostname.includes('tiktok.com')) {
+    if (urlObj.hostname.includes('tiktok.com') || urlObj.hostname.includes('vt.tiktok.com') || urlObj.hostname.includes('vm.tiktok.com')) {
       return 'tiktok';
     }
     if (urlObj.hostname.includes('instagram.com')) {
@@ -119,6 +121,7 @@ export class VideoExtractor {
 
   private static async fetchYouTubeMetadata(videoId: string): Promise<VideoInfo> {
     try {
+      console.log(`[DEBUG] Attempting ytdl-core for video ID: ${videoId}`);
       // Get video info using ytdl-core
       const info = await ytdl.getInfo(videoId);
       const details = info.videoDetails;
@@ -190,36 +193,75 @@ export class VideoExtractor {
 
   private static async extractTikTokInfo(url: string): Promise<VideoInfo> {
     try {
-      // Extract TikTok video ID from URL
-      const match = url.match(/(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/t\/)(\d+)/);
-      const videoId = match ? match[1] : 'unknown';
+      console.log(`[DEBUG] Processing TikTok URL: ${url}`);
       
-      // Try to get basic info from TikTok oEmbed API
-      const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`);
-      if (response.ok) {
-        const data = await response.json() as any;
-        return {
-          platform: 'tiktok',
-          videoId,
-          title: data.title || 'TikTok Video',
-          description: 'TikTok video content',
-          duration: 'Unknown',
-          durationSeconds: 0,
-          thumbnail: {
-            url: data.thumbnail_url || 'https://via.placeholder.com/720x720?text=TikTok+Video',
-            width: data.thumbnail_width || 720,
-            height: data.thumbnail_height || 720
-          },
-          author: {
-            name: data.author_name || 'TikTok User',
-            url: data.author_url || url
-          },
-          uploadDate: new Date().toISOString().split('T')[0],
-          viewCount: 0
-        };
+      // Handle vt.tiktok.com short URLs by following redirects
+      let finalUrl = url;
+      if (url.includes('vt.tiktok.com')) {
+        try {
+          console.log(`[DEBUG] Resolving TikTok short URL: ${url}`);
+          const response = await fetch(url, { 
+            method: 'HEAD', 
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
+          });
+          finalUrl = response.url || url;
+          console.log(`[DEBUG] Resolved to: ${finalUrl}`);
+        } catch (redirectError) {
+          console.log(`[DEBUG] Failed to resolve redirect, using original URL`);
+        }
       }
-      throw new Error('Failed to fetch TikTok oEmbed data');
+      
+      // Extract TikTok video ID from URL patterns
+      const patterns = [
+        /(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/t\/)(\d+)/,
+        /vm\.tiktok\.com\/([A-Za-z0-9]+)/,
+        /vt\.tiktok\.com\/([A-Za-z0-9]+)/
+      ];
+      
+      let videoId = 'unknown';
+      
+      // First try to extract from the final URL
+      for (const pattern of patterns) {
+        const match = finalUrl.match(pattern);
+        if (match) {
+          videoId = match[1];
+          break;
+        }
+      }
+      
+      // If not found and original URL was a short URL, use the short code
+      if (videoId === 'unknown' && url !== finalUrl) {
+        const shortMatch = url.match(/(?:vt|vm)\.tiktok\.com\/([A-Za-z0-9]+)/);
+        if (shortMatch) {
+          videoId = shortMatch[1];
+        }
+      }
+      
+      console.log(`[DEBUG] Extracted TikTok video ID: ${videoId}`);
+      
+      // For TikTok, return a basic response since their API is restrictive
+      return {
+        platform: 'tiktok',
+        videoId,
+        title: `TikTok Video (${videoId})`,
+        description: 'TikTok video content - full metadata extraction requires special API access',
+        duration: 'Unknown',
+        durationSeconds: 0,
+        thumbnail: {
+          url: 'https://via.placeholder.com/720x720/000000/FFFFFF?text=TikTok+Video',
+          width: 720,
+          height: 720
+        },
+        author: {
+          name: 'TikTok User',
+          url: finalUrl
+        },
+        uploadDate: new Date().toISOString().split('T')[0],
+        viewCount: 0
+      };
     } catch (error: any) {
+      console.error(`[ERROR] TikTok extraction failed:`, error.message);
       throw new Error(`Failed to extract TikTok video info: ${error.message}`);
     }
   }

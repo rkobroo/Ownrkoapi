@@ -1,7 +1,7 @@
 
-import ytdl from 'ytdl-core';
-import fetch from 'node-fetch';
-import { z } from 'zod';
+const ytdl = require('ytdl-core');
+const fetch = require('node-fetch');
+const { z } = require('zod');
 
 // VideoExtractor class
 class VideoExtractor {
@@ -286,7 +286,7 @@ class AISummaryService {
 }
 
 // Netlify function handler
-export const handler = async (event, context) => {
+exports.handler = async (event, context) => {
   const startTime = Date.now();
 
   // CORS headers

@@ -1,3 +1,4 @@
+
 // Vercel serverless function entry point
 import express from 'express';
 import ytdl from 'ytdl-core';
@@ -55,6 +56,8 @@ class VideoExtractor {
     switch (platform) {
       case 'youtube':
         return this.extractYouTubeInfo(url);
+      case 'tiktok':
+        return this.extractTikTokInfo(url);
       default:
         throw new Error(`Platform ${platform} is not yet implemented`);
     }
@@ -89,6 +92,45 @@ class VideoExtractor {
     }
   }
 
+  static async extractTikTokInfo(url) {
+    try {
+      // Extract video ID from TikTok URL
+      let videoId = '';
+      const urlObj = new URL(url);
+      
+      if (urlObj.hostname.includes('vt.tiktok.com')) {
+        // Handle short URLs by extracting the path
+        videoId = urlObj.pathname.substring(1);
+      } else {
+        // Handle regular TikTok URLs
+        const pathParts = urlObj.pathname.split('/');
+        videoId = pathParts[pathParts.length - 1] || pathParts[pathParts.length - 2];
+      }
+
+      return {
+        platform: 'tiktok',
+        videoId: videoId,
+        title: `TikTok Video (${videoId})`,
+        description: 'TikTok video description not available via API',
+        duration: 'Unknown',
+        durationSeconds: 0,
+        thumbnail: {
+          url: '',
+          width: 0,
+          height: 0
+        },
+        author: {
+          name: 'TikTok User',
+          url: ''
+        },
+        uploadDate: new Date().toISOString(),
+        viewCount: 0
+      };
+    } catch (error) {
+      throw new Error('Failed to extract TikTok video information');
+    }
+  }
+
   static formatDuration(seconds) {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -101,7 +143,7 @@ class VideoExtractor {
   }
 
   static generateDownloadLinks(videoInfo) {
-    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://your-app.vercel.app';
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://rko-bro-api.vercel.app';
     
     return {
       video: [
@@ -120,32 +162,81 @@ class VideoExtractor {
 
 class AISummaryService {
   static async generateSummary(title, description) {
-    // Simple summary generation without OpenAI dependency for now
-    const combinedText = `${title}. ${description}`;
-    const words = combinedText.split(' ');
-    
-    if (words.length <= 30) {
-      return combinedText;
+    // Fallback to simple text processing when OpenAI is unavailable
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return this.fallbackSummary(title, description);
+      }
+
+      // Simple summary generation without OpenAI dependency for now
+      const combinedText = `${title}. ${description}`;
+      const words = combinedText.split(' ');
+      
+      if (words.length <= 30) {
+        return combinedText;
+      }
+      
+      // Take first 25 words and add ellipsis
+      return words.slice(0, 25).join(' ') + '...';
+    } catch (error) {
+      return this.fallbackSummary(title, description);
     }
-    
-    // Take first 25 words and add ellipsis
-    return words.slice(0, 25).join(' ') + '...';
   }
 
   static async generateMainPoints(title, description) {
-    // Simple main points extraction
-    const sentences = description.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return this.fallbackMainPoints(title, description);
+      }
+
+      // Simple main points extraction
+      const sentences = description.split(/[.!?]+/).filter(s => s.trim().length > 0);
+      
+      if (sentences.length <= 3) {
+        return sentences.map(s => s.trim()).filter(s => s.length > 0);
+      }
+      
+      // Return first 3 sentences as main points
+      return sentences.slice(0, 3).map(s => s.trim()).filter(s => s.length > 0);
+    } catch (error) {
+      return this.fallbackMainPoints(title, description);
+    }
+  }
+
+  static fallbackSummary(title, description) {
+    const combinedText = `${title}. ${description}`;
+    const words = combinedText.split(' ');
     
-    if (sentences.length <= 3) {
-      return sentences.map(s => s.trim()).filter(s => s.length > 0);
+    if (words.length <= 20) {
+      return combinedText;
     }
     
-    // Return first 3 sentences as main points
-    return sentences.slice(0, 3).map(s => s.trim()).filter(s => s.length > 0);
+    return words.slice(0, 20).join(' ') + '...';
+  }
+
+  static fallbackMainPoints(title, description) {
+    return [
+      `Video title: ${title}`,
+      'Content analysis unavailable without OpenAI API key',
+      'Full description available in video metadata'
+    ];
   }
 }
 
 const app = express();
+
+// Add CORS headers for Vercel
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -294,6 +385,20 @@ app.get('/download/:type/:format/:quality/:videoId', (req, res) => {
     type,
     filename,
     note: "This is a demo endpoint. In production, this would stream the actual audio file."
+  });
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: "success",
+    message: "RKO API is running",
+    version: "1.0.0",
+    endpoints: [
+      "GET /rko/alldl?url={VIDEO_URL}",
+      "GET /download/{type}/{quality}/{videoId}",
+      "GET /download/{type}/{format}/{quality}/{videoId}"
+    ]
   });
 });
 

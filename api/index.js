@@ -401,7 +401,7 @@ export default async function handler(req, res) {
     });
   }
 
-  if (req.url.startsWith('/api/download/')) {
+  if (req.url && req.url.startsWith('/api/download/')) {
     const pathParts = req.url.split('/');
     const type = pathParts[3];
     const quality = pathParts[4];
@@ -418,9 +418,9 @@ export default async function handler(req, res) {
   }
 
   // Main API endpoint
-  if (req.url.includes('/rko/alldl') || req.method === 'GET') {
+  if ((req.url && req.url.includes('/rko/alldl')) || req.method === 'GET') {
     try {
-      const { url } = req.query;
+      const { url } = req.query || {};
 
       if (!url) {
         return res.status(400).json({

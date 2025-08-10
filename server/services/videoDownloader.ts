@@ -34,54 +34,84 @@ export class VideoDownloader {
     }
   }
 
+  private async tryPythonCommand(args: string[]): Promise<{ command: string; process: any }> {
+    // Try different Python commands based on environment
+    const pythonCommands = process.env.NODE_ENV === 'production' 
+      ? [
+          '/opt/render/project/.venv/bin/python', // Render virtual env
+          '/opt/render/project/.venv/bin/yt-dlp', // Direct yt-dlp in venv
+          'python3', 
+          'python', 
+          'yt-dlp'
+        ]
+      : ['python', 'python3', 'yt-dlp'];
+    
+    for (const cmd of pythonCommands) {
+      try {
+        if (cmd.includes('yt-dlp') && !cmd.includes('python')) {
+          return { command: cmd, process: spawn(cmd, args.slice(2)) }; // Remove '-m yt_dlp'
+        } else {
+          return { command: cmd, process: spawn(cmd, args) };
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+    throw new Error('No Python or yt-dlp command found');
+  }
+
   async analyzeVideo(url: string): Promise<VideoInfo> {
-    return new Promise((resolve, reject) => {
-      const ytDlp = spawn('python', [
-        '-m', 'yt_dlp',
-        '--dump-json',
-        '--no-download',
-        url
-      ]);
+    return new Promise(async (resolve, reject) => {
+      try {
+        const { command, process: ytDlp } = await this.tryPythonCommand([
+          '-m', 'yt_dlp',
+          '--dump-json',
+          '--no-download',
+          url
+        ]);
 
-      let output = '';
-      let error = '';
+        let output = '';
+        let error = '';
 
-      ytDlp.stdout.on('data', (data) => {
-        output += data.toString();
-      });
+        ytDlp.stdout.on('data', (data: any) => {
+          output += data.toString();
+        });
 
-      ytDlp.stderr.on('data', (data) => {
-        error += data.toString();
-      });
+        ytDlp.stderr.on('data', (data: any) => {
+          error += data.toString();
+        });
 
-      ytDlp.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`yt-dlp failed: ${error}`));
-          return;
-        }
+        ytDlp.on('close', (code: any) => {
+          if (code !== 0) {
+            reject(new Error(`yt-dlp failed: ${error}`));
+            return;
+          }
 
-        try {
-          const info = JSON.parse(output.trim().split('\n')[0]);
-          const platform = this.detectPlatform(url);
-          
-          resolve({
-            title: info.title || 'Unknown Title',
-            platform,
-            thumbnail: info.thumbnail || '',
-            duration: this.formatDuration(info.duration),
-            channel: info.uploader || info.channel || 'Unknown Channel',
-            views: this.formatViews(info.view_count),
-            formats: info.formats?.map((format: any) => ({
-              format_id: format.format_id,
-              ext: format.ext,
-              quality: format.height ? `${format.height}p` : format.quality || 'audio',
-              filesize: format.filesize
-            })) || []
-          });
-        } catch (parseError) {
-          reject(new Error(`Failed to parse video info: ${parseError}`));
-        }
-      });
+          try {
+            const info = JSON.parse(output.trim().split('\n')[0]);
+            const platform = this.detectPlatform(url);
+            
+            resolve({
+              title: info.title || 'Unknown Title',
+              platform,
+              thumbnail: info.thumbnail || '',
+              duration: this.formatDuration(info.duration),
+              channel: info.uploader || info.channel || 'Unknown Channel',
+              views: this.formatViews(info.view_count),
+              formats: info.formats?.map((format: any) => ({
+                format_id: format.format_id,
+                ext: format.ext,
+                quality: format.height ? `${format.height}p` : format.quality || 'audio',
+                filesize: format.filesize
+              })) || []
+            });
+          } catch (parseError) {
+            reject(new Error(`Failed to parse video info: ${parseError}`));
+          }
+        });
+      } catch (error) {
+        reject(new Error(`Failed to initialize yt-dlp: ${error}`));
+      }
     });
   }
 
@@ -113,53 +143,60 @@ export class VideoDownloader {
       ytDlpArgs.push('--extract-audio', '--audio-format', 'mp3');
     }
 
-    const ytDlp = spawn('python', ['-m', 'yt_dlp', ...ytDlpArgs]);
+    try {
+      const { command, process: ytDlp } = await this.tryPythonCommand(['-m', 'yt_dlp', ...ytDlpArgs]);
 
-    let error = '';
+      let error = '';
 
-    ytDlp.stderr.on('data', (data) => {
-      const output = data.toString();
-      error += output;
+      ytDlp.stderr.on('data', (data: any) => {
+        const output = data.toString();
+        error += output;
 
-      // Parse progress from yt-dlp output
-      const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
-      if (progressMatch) {
-        const progress = parseFloat(progressMatch[1]);
-        storage.updateDownload(downloadId, { progress });
-      }
+        // Parse progress from yt-dlp output
+        const progressMatch = output.match(/(\d+(?:\.\d+)?)%/);
+        if (progressMatch) {
+          const progress = parseFloat(progressMatch[1]);
+          storage.updateDownload(downloadId, { progress });
+        }
 
-      // Parse download speed
-      const speedMatch = output.match(/(\d+(?:\.\d+)?[KMG]iB\/s)/);
-      if (speedMatch) {
-        storage.updateDownload(downloadId, { downloadSpeed: speedMatch[1] });
-      }
-    });
+        // Parse download speed
+        const speedMatch = output.match(/(\d+(?:\.\d+)?[KMG]iB\/s)/);
+        if (speedMatch) {
+          storage.updateDownload(downloadId, { downloadSpeed: speedMatch[1] });
+        }
+      });
 
-    ytDlp.on('close', async (code) => {
-      if (code === 0) {
-        // Find the actual downloaded file
-        const files = await fs.readdir(this.downloadsDir);
-        const downloadedFile = files.find(file => file.startsWith(downloadId));
-        
-        if (downloadedFile) {
-          await storage.updateDownload(downloadId, {
-            status: 'completed',
-            progress: 100,
-            filePath: path.join(this.downloadsDir, downloadedFile)
-          });
+      ytDlp.on('close', async (code: any) => {
+        if (code === 0) {
+          // Find the actual downloaded file
+          const files = await fs.readdir(this.downloadsDir);
+          const downloadedFile = files.find(file => file.startsWith(downloadId));
+          
+          if (downloadedFile) {
+            await storage.updateDownload(downloadId, {
+              status: 'completed',
+              progress: 100,
+              filePath: path.join(this.downloadsDir, downloadedFile)
+            });
+          } else {
+            await storage.updateDownload(downloadId, {
+              status: 'failed',
+              errorMessage: 'Downloaded file not found'
+            });
+          }
         } else {
           await storage.updateDownload(downloadId, {
             status: 'failed',
-            errorMessage: 'Downloaded file not found'
+            errorMessage: error || 'Download failed'
           });
         }
-      } else {
-        await storage.updateDownload(downloadId, {
-          status: 'failed',
-          errorMessage: error || 'Download failed'
-        });
-      }
-    });
+      });
+    } catch (error) {
+      await storage.updateDownload(downloadId, {
+        status: 'failed',
+        errorMessage: `Failed to initialize download: ${error}`
+      });
+    }
   }
 
   private detectPlatform(url: string): string {

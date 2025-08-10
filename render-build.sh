@@ -1,23 +1,35 @@
 #!/bin/bash
 set -e
 
-echo "Installing Python and yt-dlp..."
-# Install Python 3 and pip if not available
-if ! command -v python3 &> /dev/null; then
-    apt-get update
-    apt-get install -y python3 python3-pip ffmpeg
-fi
+echo "=== SnapTube Build Script ==="
+echo "Node version: $(node --version)"
+echo "NPM version: $(npm --version)"
+echo "Python version: $(python3 --version 2>/dev/null || echo 'Python3 not found')"
 
-# Install yt-dlp
-pip3 install --user yt-dlp>=2025.7.21
+echo "Installing system dependencies..."
+# Update package list and install required packages
+sudo apt-get update -qq
+sudo apt-get install -y python3 python3-pip python3-venv ffmpeg curl wget
 
-# Verify yt-dlp installation
-python3 -m yt_dlp --version
+echo "Creating Python virtual environment..."
+python3 -m venv /opt/render/project/.venv
+source /opt/render/project/.venv/bin/activate
+
+echo "Installing yt-dlp in virtual environment..."
+pip install --upgrade pip
+pip install yt-dlp>=2025.7.21
+
+echo "Verifying yt-dlp installation..."
+python -m yt_dlp --version
+which python
+which yt-dlp
 
 echo "Installing Node.js dependencies..."
-npm ci
+npm ci --only=production
 
 echo "Building the application..."
 npm run build
 
 echo "Build completed successfully!"
+echo "Python path: $(which python)"
+echo "yt-dlp version: $(python -m yt_dlp --version)"

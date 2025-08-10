@@ -4,6 +4,9 @@ FROM node:18
 # Install Python & pip
 RUN apt-get update && apt-get install -y python3 python3-pip
 
+# Make "python" command point to python3
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
 # Upgrade pip and install yt-dlp
 RUN pip3 install --upgrade pip
 RUN pip3 install yt-dlp

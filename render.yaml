@@ -1,6 +1,14 @@
 services:
   - type: web
-    name: videosnap
+    name: ownrkoapi
     env: node
-    buildCommand: npm install && pip install yt-dlp
+    plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      npm install
+      npm run build
     startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18

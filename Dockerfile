@@ -1,33 +1,37 @@
-# Use Node 18 base image
-FROM node:18
+# Use Node.js 20 with Python support for yt-dlp
+FROM node:20-bullseye
 
-# Install Python & pip
-RUN apt-get update && apt-get install -y python3 python3-pip
+# Install Python and pip for yt-dlp
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Make "python" command point to python3
-RUN ln -sf /usr/bin/python3 /usr/bin/python
-
-# Upgrade pip and install yt-dlp
-RUN pip3 install --upgrade pip
-RUN pip3 install yt-dlp
+# Install yt-dlp
+RUN pip3 install yt-dlp>=2025.7.21
 
 # Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json first for better caching
+# Copy package files
 COPY package*.json ./
 
-# Install Node dependencies
-RUN npm install
+# Install Node.js dependencies
+RUN npm ci --only=production
 
-# Copy the rest of the application files
+# Copy source code
 COPY . .
 
-# Build the Node.js app
+# Build the application
 RUN npm run build
 
-# Expose port (Render will override but good practice)
-EXPOSE 10000
+# Expose port
+EXPOSE 5000
 
-# Start the app
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=5000
+
+# Start the application
 CMD ["npm", "start"]

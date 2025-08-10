@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: videosnap
+    env: node
+    buildCommand: npm install && pip install yt-dlp
+    startCommand: npm start

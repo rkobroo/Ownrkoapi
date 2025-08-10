@@ -1,85 +1,54 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const videoRequests = pgTable("video_requests", {
+export const downloads = pgTable("downloads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   url: text("url").notNull(),
-  platform: text("platform").notNull(),
-  videoId: text("video_id"),
   title: text("title"),
-  description: text("description"),
+  platform: text("platform").notNull(),
+  thumbnail: text("thumbnail"),
   duration: text("duration"),
-  durationSeconds: integer("duration_seconds"),
-  thumbnail: json("thumbnail").$type<{
-    url: string;
-    width: number;
-    height: number;
-  }>(),
-  author: json("author").$type<{
-    name: string;
-    url: string;
-  }>(),
-  uploadDate: text("upload_date"),
-  viewCount: integer("view_count"),
-  mainPoints: text("main_points").array(),
-  aiSummary: text("ai_summary"),
-  downloadLinks: json("download_links").$type<{
-    video?: Record<string, string>;
-    audio?: Record<string, string>;
-  }>(),
+  channel: text("channel"),
+  views: text("views"),
+  format: text("format").notNull(),
+  quality: text("quality").notNull(),
+  fileSize: text("file_size"),
+  status: text("status").notNull().default("pending"), // pending, analyzing, downloading, completed, failed
+  progress: integer("progress").default(0),
+  downloadSpeed: text("download_speed"),
+  downloadedSize: text("downloaded_size"),
+  eta: text("eta"),
+  errorMessage: text("error_message"),
+  filePath: text("file_path"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertVideoRequestSchema = createInsertSchema(videoRequests).pick({
+export const insertDownloadSchema = createInsertSchema(downloads).pick({
   url: true,
+  format: true,
+  quality: true,
 });
 
-export type InsertVideoRequest = z.infer<typeof insertVideoRequestSchema>;
-export type VideoRequest = typeof videoRequests.$inferSelect;
+export const updateDownloadSchema = createInsertSchema(downloads).pick({
+  title: true,
+  platform: true,
+  thumbnail: true,
+  duration: true,
+  channel: true,
+  views: true,
+  fileSize: true,
+  status: true,
+  progress: true,
+  downloadSpeed: true,
+  downloadedSize: true,
+  eta: true,
+  errorMessage: true,
+  filePath: true,
+}).partial();
 
-// API Response Types
-export const videoMetadataSchema = z.object({
-  status: z.literal("success"),
-  data: z.object({
-    platform: z.string(),
-    video_id: z.string(),
-    title: z.string(),
-    description: z.string(),
-    duration: z.string(),
-    duration_seconds: z.number(),
-    thumbnail: z.object({
-      url: z.string(),
-      width: z.number(),
-      height: z.number(),
-    }),
-    author: z.object({
-      name: z.string(),
-      url: z.string(),
-    }),
-    upload_date: z.string(),
-    view_count: z.number(),
-    main_points: z.array(z.string()),
-    ai_summary: z.string(),
-    download_links: z.object({
-      video: z.record(z.string()).optional(),
-      audio: z.record(z.string()).optional(),
-    }),
-  }),
-  timestamp: z.string(),
-  processing_time: z.string(),
-});
-
-export const apiErrorSchema = z.object({
-  status: z.literal("error"),
-  error: z.object({
-    code: z.number(),
-    message: z.string(),
-    details: z.string().optional(),
-  }),
-  timestamp: z.string(),
-});
-
-export type VideoMetadataResponse = z.infer<typeof videoMetadataSchema>;
-export type ApiErrorResponse = z.infer<typeof apiErrorSchema>;
+export type InsertDownload = z.infer<typeof insertDownloadSchema>;
+export type UpdateDownload = z.infer<typeof updateDownloadSchema>;
+export type Download = typeof downloads.$inferSelect;

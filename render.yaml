@@ -1,5 +1,16 @@
 services:
   - type: web
-    name: ownrkoapi
-    env: docker
-    plan: free
+    name: snaptube-video-downloader
+    env: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: snaptube-video-downloader
+          property: port
+    healthCheckPath: /health

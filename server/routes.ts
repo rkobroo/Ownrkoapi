@@ -1,173 +1,174 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import { VideoDownloader } from "./services/videoDownloader";
+import { insertDownloadSchema, updateDownloadSchema } from "@shared/schema";
 import { z } from "zod";
-import { VideoExtractor } from "./services/videoExtractor";
-import { AISummaryService } from "./services/aiSummary";
-import { videoMetadataSchema, apiErrorSchema } from "@shared/schema";
+
+const videoDownloader = new VideoDownloader();
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Video metadata extraction endpoint
-  app.get("/rko/alldl", async (req, res) => {
-    const startTime = Date.now();
-    console.log(`[REQUEST] ${req.method} ${req.url} - Query:`, req.query);
-    
+  // Health check endpoint to prevent sleep on free hosting
+  app.get('/health', (req, res) => {
+    res.status(200).json({ 
+      status: 'OK', 
+      timestamp: new Date(),
+      service: 'VideoSnap Downloader'
+    });
+  });
+
+  // Get all downloads
+  app.get("/api/downloads", async (req, res) => {
     try {
-      // Validate URL parameter
-      const urlSchema = z.object({
-        url: z.string().url("Invalid URL format")
-      });
-      
-      const { url } = urlSchema.parse(req.query);
-      
-      // Validate if URL is from supported platform
-      if (!VideoExtractor.validateUrl(url)) {
-        return res.status(400).json({
-          status: "error",
-          error: {
-            code: 400,
-            message: "Unsupported platform",
-            details: "The provided URL is not from a supported social media platform."
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Extract video information
-      let videoInfo;
-      try {
-        console.log(`[DEBUG] Extracting video info for URL: ${url}`);
-        videoInfo = await VideoExtractor.extractVideoInfo(url);
-        console.log(`[DEBUG] Video extraction successful for: ${videoInfo.title}`);
-      } catch (error: any) {
-        console.error(`[ERROR] Video extraction failed for URL: ${url}`, error.message);
-        
-        if (error.message && error.message.includes('not yet implemented')) {
-          return res.status(503).json({
-            status: "error",
-            error: {
-              code: 503,
-              message: "Platform temporarily unavailable",
-              details: "This platform is currently under development. Please try again later."
-            },
-            timestamp: new Date().toISOString()
-          });
-        }
-        
-        return res.status(404).json({
-          status: "error",
-          error: {
-            code: 404,
-            message: "Video not found",
-            details: `The video could not be found or may be private/deleted. Error: ${error.message}`
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Generate AI summary and main points (with fallback for quota issues)
-      let mainPoints, aiSummary;
-      try {
-        [mainPoints, aiSummary] = await Promise.all([
-          AISummaryService.generateMainPoints(videoInfo.title, videoInfo.description),
-          AISummaryService.generateSummary(videoInfo.title, videoInfo.description)
-        ]);
-      } catch (aiError: any) {
-        console.log(`[INFO] AI features temporarily unavailable: ${aiError.message}`);
-        mainPoints = ["AI analysis temporarily unavailable", "Please check your OpenAI API credits"];
-        aiSummary = "AI summary temporarily unavailable. Video downloading is fully functional.";
-      }
-
-      // Generate download links
-      const downloadLinks = VideoExtractor.generateDownloadLinks(videoInfo);
-
-      const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
-
-      const response = {
-        status: "success",
-        data: {
-          platform: videoInfo.platform,
-          video_id: videoInfo.videoId,
-          title: videoInfo.title,
-          description: videoInfo.description,
-          duration: videoInfo.duration,
-          duration_seconds: videoInfo.durationSeconds,
-          thumbnail: videoInfo.thumbnail,
-          author: videoInfo.author,
-          upload_date: videoInfo.uploadDate,
-          view_count: videoInfo.viewCount,
-          main_points: mainPoints,
-          ai_summary: aiSummary,
-          download_links: downloadLinks
-        },
-        timestamp: new Date().toISOString(),
-        processing_time: `${processingTime}s`
-      };
-
-      res.json(response);
-      
+      const downloads = await storage.getDownloads();
+      res.json(downloads);
     } catch (error) {
-      console.error('API Error:', error);
-      
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          status: "error",
-          error: {
-            code: 400,
-            message: "Invalid request parameters",
-            details: error.errors.map(e => e.message).join(', ')
-          },
-          timestamp: new Date().toISOString()
-        });
+      res.status(500).json({ error: "Failed to fetch downloads" });
+    }
+  });
+
+  // Get single download
+  app.get("/api/downloads/:id", async (req, res) => {
+    try {
+      const download = await storage.getDownload(req.params.id);
+      if (!download) {
+        return res.status(404).json({ error: "Download not found" });
+      }
+      res.json(download);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch download" });
+    }
+  });
+
+  // Analyze video URL
+  app.post("/api/analyze", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
       }
 
-      res.status(500).json({
-        status: "error",
-        error: {
-          code: 500,
-          message: "Internal server error",
-          details: "An unexpected error occurred while processing your request."
-        },
-        timestamp: new Date().toISOString()
+      const videoInfo = await videoDownloader.analyzeVideo(url);
+      res.json(videoInfo);
+    } catch (error) {
+      console.error("Analysis failed:", error);
+      res.status(400).json({ 
+        error: "Failed to analyze video", 
+        details: error instanceof Error ? error.message : "Unknown error" 
       });
     }
   });
 
-  // Download endpoints
-  app.get("/download/video/:quality/:videoId", (req, res) => {
-    const { quality, videoId } = req.params;
-    const filename = req.query.filename || `video_${videoId}_${quality}.mp4`;
-    
-    res.json({
-      status: "success",
-      message: "Download endpoint ready",
-      videoId,
-      quality,
-      filename,
-      note: "This is a demo endpoint. In production, this would stream the actual video file."
-    });
+  // Create new download
+  app.post("/api/downloads", async (req, res) => {
+    try {
+      const validatedData = insertDownloadSchema.parse(req.body);
+      
+      // First analyze the video to get metadata
+      const videoInfo = await videoDownloader.analyzeVideo(validatedData.url);
+      
+      const download = await storage.createDownload(validatedData);
+      
+      // Update with video metadata
+      await storage.updateDownload(download.id, {
+        title: videoInfo.title,
+        platform: videoInfo.platform,
+        thumbnail: videoInfo.thumbnail,
+        duration: videoInfo.duration,
+        channel: videoInfo.channel,
+        views: videoInfo.views,
+        status: "analyzing"
+      });
+
+      // Start download process asynchronously
+      videoDownloader.downloadVideo(
+        download.id, 
+        validatedData.url, 
+        validatedData.format, 
+        validatedData.quality
+      ).catch(console.error);
+
+      const updatedDownload = await storage.getDownload(download.id);
+      res.status(201).json(updatedDownload);
+    } catch (error) {
+      console.error("Download creation failed:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ 
+        error: "Failed to create download",
+        details: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
   });
 
-  app.get("/download/audio/:quality/:videoId", (req, res) => {
-    const { quality, videoId } = req.params;
-    const filename = req.query.filename || `audio_${videoId}_${quality}.mp3`;
-    
-    res.json({
-      status: "success",
-      message: "Download endpoint ready",
-      videoId,
-      quality,
-      filename,
-      note: "This is a demo endpoint. In production, this would stream the actual audio file."
-    });
+  // Update download
+  app.patch("/api/downloads/:id", async (req, res) => {
+    try {
+      const validatedData = updateDownloadSchema.parse(req.body);
+      const download = await storage.updateDownload(req.params.id, validatedData);
+      
+      if (!download) {
+        return res.status(404).json({ error: "Download not found" });
+      }
+      
+      res.json(download);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update download" });
+    }
   });
 
-  // Health check endpoint
-  app.get("/api/health", (req, res) => {
-    res.json({
-      status: "online",
-      timestamp: new Date().toISOString(),
-      version: "1.0.0"
-    });
+  // Download file
+  app.get("/api/downloads/:id/download", async (req, res) => {
+    try {
+      const download = await storage.getDownload(req.params.id);
+      if (!download) {
+        return res.status(404).json({ error: "Download not found" });
+      }
+      
+      if (download.status !== "completed" || !download.filePath) {
+        return res.status(400).json({ error: "Download not ready" });
+      }
+
+      // Check if file exists
+      const fs = await import('fs');
+      if (!fs.existsSync(download.filePath)) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
+      // Set appropriate headers for file download
+      const path = await import('path');
+      const filename = path.basename(download.filePath);
+      const sanitizedTitle = download.title?.replace(/[^a-zA-Z0-9\s\-_]/g, '') || 'video';
+      const extension = path.extname(filename);
+      const downloadName = `${sanitizedTitle}${extension}`;
+
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      
+      // Stream the file
+      const fileStream = fs.createReadStream(download.filePath);
+      fileStream.pipe(res);
+    } catch (error) {
+      console.error("File download failed:", error);
+      res.status(500).json({ error: "Failed to download file" });
+    }
+  });
+
+  // Delete download
+  app.delete("/api/downloads/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteDownload(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: "Download not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete download" });
+    }
   });
 
   const httpServer = createServer(app);

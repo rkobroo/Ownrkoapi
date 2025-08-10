@@ -36,8 +36,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Function to create and configure the app
-export async function createServer() {
+(async () => {
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -48,32 +47,25 @@ export async function createServer() {
     throw err;
   });
 
-  // For Vercel, we don't need to set up Vite or static serving
-  // Vercel handles static files separately
-  if (process.env.VERCEL !== '1') {
-    // Only setup vite/static serving for non-Vercel environments
-    if (app.get("env") === "development") {
-      await setupVite(app, server);
-    } else {
-      serveStatic(app);
-    }
+  // importantly only setup vite in development and after
+  // setting up all the other routes so the catch-all route
+  // doesn't interfere with the other routes
+  if (app.get("env") === "development") {
+    await setupVite(app, server);
+  } else {
+    serveStatic(app);
   }
 
-  return app;
-}
-
-// For non-Vercel environments (like local development)
-if (process.env.VERCEL !== '1') {
-  (async () => {
-    const server = await createServer();
-    
-    const port = parseInt(process.env.PORT || '5000', 10);
-    const httpServer = server.listen({
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    }, () => {
-      log(`serving on port ${port}`);
-    });
-  })();
-}
+  // ALWAYS serve the app on the port specified in the environment variable PORT
+  // Other ports are firewalled. Default to 5000 if not specified.
+  // this serves both the API and the client.
+  // It is the only port that is not firewalled.
+  const port = parseInt(process.env.PORT || '5000', 10);
+  server.listen({
+    port,
+    host: "0.0.0.0",
+    reusePort: true,
+  }, () => {
+    log(`serving on port ${port}`);
+  });
+})();

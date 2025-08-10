@@ -3,7 +3,7 @@ services:
     name: snaptube-video-downloader
     env: node
     plan: starter
-    buildCommand: node install-ytdlp.js && npm ci && npm run build
+    buildCommand: npm ci && npm run build
     startCommand: node start-production.js
     envVars:
       - key: NODE_ENV

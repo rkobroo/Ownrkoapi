@@ -34,33 +34,86 @@ export class VideoDownloader {
     }
   }
 
-  private async tryPythonCommand(args: string[]): Promise<{ command: string; process: any }> {
-    // Try different Python commands based on environment
-    const pythonCommands = process.env.NODE_ENV === 'production' 
-      ? [
-          '/opt/render/project/.venv/bin/python', // Render virtual env
-          '/opt/render/project/.venv/bin/yt-dlp', // Direct yt-dlp in venv
-          'python3', 
-          'python', 
-          'yt-dlp'
-        ]
-      : ['python', 'python3', 'yt-dlp'];
-    
-    for (const cmd of pythonCommands) {
-      try {
-        if (cmd.includes('yt-dlp') && !cmd.includes('python')) {
-          return { command: cmd, process: spawn(cmd, args.slice(2)) }; // Remove '-m yt_dlp'
-        } else {
-          return { command: cmd, process: spawn(cmd, args) };
-        }
-      } catch (error) {
-        continue;
-      }
+  private async installYtDlp(): Promise<boolean> {
+    try {
+      const { execSync } = await import('child_process');
+      console.log('Installing yt-dlp at runtime...');
+      execSync('python3 -m pip install --user yt-dlp', { stdio: 'inherit' });
+      console.log('yt-dlp installed successfully at runtime');
+      return true;
+    } catch (error) {
+      console.error('Runtime yt-dlp installation failed:', error);
+      return false;
     }
-    throw new Error('No Python or yt-dlp command found');
   }
 
-  async analyzeVideo(url: string): Promise<VideoInfo> {
+  private async analyzeTikTokVideo(url: string): Promise<VideoInfo> {
+    try {
+      const rapidApiKey = process.env.RAPIDAPI_KEY;
+      if (!rapidApiKey) {
+        throw new Error('RapidAPI key not configured for TikTok downloads');
+      }
+
+      const response = await fetch('https://tiktok-video-no-watermark2.p.rapidapi.com/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': rapidApiKey,
+          'X-RapidAPI-Host': 'tiktok-video-no-watermark2.p.rapidapi.com'
+        },
+        body: JSON.stringify({
+          url: url,
+          hd: 1
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to analyze TikTok video');
+      }
+
+      const data = await response.json();
+      
+      if (!data.data || data.code !== 0) {
+        throw new Error('Invalid TikTok video or private content');
+      }
+
+      const videoData = data.data;
+      
+      return {
+        title: videoData.title || 'TikTok Video',
+        platform: 'TikTok',
+        thumbnail: videoData.cover || '',
+        duration: this.formatDuration(videoData.duration),
+        channel: videoData.author?.unique_id || 'Unknown Author',
+        views: this.formatViews(videoData.play_count),
+        formats: [
+          {
+            format_id: 'mp4_hd',
+            ext: 'mp4',
+            quality: 'HD',
+            filesize: undefined
+          },
+          {
+            format_id: 'mp4_sd',
+            ext: 'mp4',
+            quality: 'SD',
+            filesize: undefined
+          },
+          {
+            format_id: 'mp3',
+            ext: 'mp3',
+            quality: 'audio',
+            filesize: undefined
+          }
+        ]
+      };
+    } catch (error) {
+      // Fallback to error message
+      throw new Error(`TikTok analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  private async analyzeWithYtDlp(url: string): Promise<VideoInfo> {
     return new Promise(async (resolve, reject) => {
       try {
         const { command, process: ytDlp } = await this.tryPythonCommand([
@@ -83,12 +136,17 @@ export class VideoDownloader {
 
         ytDlp.on('close', (code: any) => {
           if (code !== 0) {
-            reject(new Error(`yt-dlp failed: ${error}`));
+            reject(new Error(`Failed to analyze video: ${error || 'Unknown error'}`));
             return;
           }
 
           try {
-            const info = JSON.parse(output.trim().split('\n')[0]);
+            const lines = output.trim().split('\n').filter(line => line.startsWith('{'));
+            if (lines.length === 0) {
+              throw new Error('No video information found in response');
+            }
+            
+            const info = JSON.parse(lines[0]);
             const platform = this.detectPlatform(url);
             
             resolve({
@@ -106,13 +164,63 @@ export class VideoDownloader {
               })) || []
             });
           } catch (parseError) {
-            reject(new Error(`Failed to parse video info: ${parseError}`));
+            reject(new Error(`Unable to extract video information: ${parseError}`));
           }
         });
       } catch (error) {
-        reject(new Error(`Failed to initialize yt-dlp: ${error}`));
+        reject(error);
       }
     });
+  }
+
+  private async tryPythonCommand(args: string[]): Promise<{ command: string; process: any }> {
+    // Simplified Python commands - avoid hardcoded paths
+    const pythonCommands = ['python3', 'python'];
+    
+    for (const cmd of pythonCommands) {
+      try {
+        const process = spawn(cmd, args, {
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+        return { command: cmd, process };
+      } catch (error) {
+        console.log(`Failed to spawn ${cmd}:`, error);
+        continue;
+      }
+    }
+    
+    // If no Python command worked, try to install yt-dlp and retry once
+    if (process.env.NODE_ENV === 'production') {
+      console.log('Installing yt-dlp at runtime...');
+      const installed = await this.installYtDlp();
+      
+      if (installed) {
+        // Try again after installation
+        for (const cmd of pythonCommands) {
+          try {
+            const process = spawn(cmd, args, {
+              stdio: ['pipe', 'pipe', 'pipe']
+            });
+            return { command: cmd, process };
+          } catch (error) {
+            console.log(`Failed to spawn ${cmd} after installation:`, error);
+            continue;
+          }
+        }
+      }
+    }
+    
+    throw new Error('No Python interpreter found. Please ensure Python 3 is installed.');
+  }
+
+  async analyzeVideo(url: string): Promise<VideoInfo> {
+    // Use yt-dlp for all platforms including TikTok
+    if (url.includes('tiktok.com')) {
+      return this.analyzeTikTokVideo(url);
+    }
+
+    // Use yt-dlp for other platforms
+    return this.analyzeWithYtDlp(url);
   }
 
   async downloadVideo(downloadId: string, url: string, format: string, quality: string): Promise<void> {
@@ -123,12 +231,25 @@ export class VideoDownloader {
 
     await storage.updateDownload(downloadId, { status: 'downloading', progress: 0 });
 
+    // Handle TikTok downloads with RapidAPI
+    if (url.includes('tiktok.com')) {
+      return this.downloadTikTokVideo(downloadId, url, format, quality);
+    }
+
+    // Use yt-dlp for other platforms
     const filename = `${downloadId}.%(ext)s`;
     const outputPath = path.join(this.downloadsDir, filename);
 
     let formatSelector = 'best';
     if (format === 'mp4') {
-      formatSelector = quality === 'audio' ? 'bestaudio/best' : `best[height<=${quality.replace('p', '')}]`;
+      if (quality === 'audio') {
+        formatSelector = 'bestaudio/best';
+      } else if (quality && quality.includes('p')) {
+        const height = quality.replace('p', '');
+        formatSelector = `best[height<=${height}]`;
+      } else {
+        formatSelector = 'best';
+      }
     } else if (format === 'mp3') {
       formatSelector = 'bestaudio/best';
     }
@@ -195,6 +316,84 @@ export class VideoDownloader {
       await storage.updateDownload(downloadId, {
         status: 'failed',
         errorMessage: `Failed to initialize download: ${error}`
+      });
+    }
+  }
+
+  private async downloadTikTokVideo(downloadId: string, url: string, format: string, quality: string): Promise<void> {
+    try {
+      const rapidApiKey = process.env.RAPIDAPI_KEY;
+      if (!rapidApiKey) {
+        throw new Error('RapidAPI key not configured for TikTok downloads');
+      }
+
+      await storage.updateDownload(downloadId, { progress: 20 });
+
+      const response = await fetch('https://tiktok-video-no-watermark2.p.rapidapi.com/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': rapidApiKey,
+          'X-RapidAPI-Host': 'tiktok-video-no-watermark2.p.rapidapi.com'
+        },
+        body: JSON.stringify({
+          url: url,
+          hd: quality === 'HD' ? 1 : 0
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get TikTok video data');
+      }
+
+      const data = await response.json();
+      
+      if (!data.data || data.code !== 0) {
+        throw new Error('Invalid TikTok video or private content');
+      }
+
+      await storage.updateDownload(downloadId, { progress: 50 });
+
+      const videoData = data.data;
+      let downloadUrl: string;
+      let fileExt: string;
+
+      if (format === 'mp3') {
+        downloadUrl = videoData.music;
+        fileExt = 'mp3';
+      } else {
+        downloadUrl = quality === 'HD' ? videoData.hdplay : videoData.play;
+        fileExt = 'mp4';
+      }
+
+      if (!downloadUrl) {
+        throw new Error('No download URL available for this TikTok video');
+      }
+
+      // Download the file
+      const fileResponse = await fetch(downloadUrl);
+      if (!fileResponse.ok) {
+        throw new Error('Failed to download TikTok video file');
+      }
+
+      await storage.updateDownload(downloadId, { progress: 75 });
+
+      const buffer = await fileResponse.arrayBuffer();
+      const filename = `${downloadId}.${fileExt}`;
+      const filePath = path.join(this.downloadsDir, filename);
+
+      await fs.writeFile(filePath, Buffer.from(buffer));
+
+      await storage.updateDownload(downloadId, {
+        status: 'completed',
+        progress: 100,
+        filePath: filePath
+      });
+
+    } catch (error) {
+      await storage.updateDownload(downloadId, {
+        status: 'failed',
+        errorMessage: `TikTok download failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
     }
   }

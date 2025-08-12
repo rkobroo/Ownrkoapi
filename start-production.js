@@ -5,6 +5,33 @@ console.log('=== SnapTube Production Startup ===');
 console.log('Node.js version:', process.version);
 console.log('Environment:', process.env.NODE_ENV || 'production');
 
+function installYtDlp() {
+  console.log('Installing yt-dlp...');
+  try {
+    // Try multiple installation methods
+    const methods = [
+      'python3 -m pip install --user --upgrade yt-dlp',
+      'pip3 install --user --upgrade yt-dlp',
+      'python -m pip install --user --upgrade yt-dlp'
+    ];
+    
+    for (const method of methods) {
+      try {
+        console.log(`Trying: ${method}`);
+        execSync(method, { stdio: 'pipe' });
+        console.log('Installation successful');
+        return true;
+      } catch (error) {
+        console.log(`Failed: ${error.message}`);
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error('All installation methods failed:', error.message);
+    return false;
+  }
+}
+
 function checkYtDlp() {
   try {
     console.log('Checking for yt-dlp...');
@@ -12,8 +39,8 @@ function checkYtDlp() {
     console.log('yt-dlp available:', version.trim());
     return true;
   } catch (error) {
-    console.log('yt-dlp not available - will attempt installation at runtime if needed');
-    return false;
+    console.log('yt-dlp not available, installing...');
+    return installYtDlp();
   }
 }
 

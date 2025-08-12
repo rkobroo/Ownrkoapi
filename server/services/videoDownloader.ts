@@ -49,7 +49,7 @@ export class VideoDownloader {
 
   private async analyzeTikTokVideo(url: string): Promise<VideoInfo> {
     try {
-      const rapidApiKey = process.env.RAPIDAPI_KEY;
+      const rapidApiKey = process.env.RAPIDAPI_KEY || 'f91bd8b131mshfecb08b2a266b46p10db0cjsn3e18664df0d1';
       if (!rapidApiKey) {
         throw new Error('RapidAPI key not configured for TikTok downloads');
       }
@@ -322,7 +322,7 @@ export class VideoDownloader {
 
   private async downloadTikTokVideo(downloadId: string, url: string, format: string, quality: string): Promise<void> {
     try {
-      const rapidApiKey = process.env.RAPIDAPI_KEY;
+      const rapidApiKey = process.env.RAPIDAPI_KEY || 'f91bd8b131mshfecb08b2a266b46p10db0cjsn3e18664df0d1';
       if (!rapidApiKey) {
         throw new Error('RapidAPI key not configured for TikTok downloads');
       }

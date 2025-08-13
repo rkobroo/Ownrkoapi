@@ -3,7 +3,7 @@ services:
     name: snaptube-video-downloader
     env: node
     plan: starter
-    buildCommand: npm ci && npm run build
+    buildCommand: chmod +x ./install-dependencies.sh && ./install-dependencies.sh && npm ci && npm run build
     startCommand: node start-production.js
     envVars:
       - key: NODE_ENV

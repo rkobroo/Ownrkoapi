@@ -47,6 +47,61 @@ export class VideoDownloader {
     }
   }
 
+  private async analyzeInstagramVideo(url: string): Promise<VideoInfo> {
+    try {
+      const rapidApiKey = process.env.RAPIDAPI_KEY || 'f91bd8b131mshfecb08b2a266b46p10db0cjsn3e18664df0d1';
+      
+      const response = await fetch('https://instagram-downloader-download-instagram-videos-stories.p.rapidapi.com/index', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': rapidApiKey,
+          'X-RapidAPI-Host': 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com'
+        },
+        body: JSON.stringify({
+          url: url
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to analyze Instagram video');
+      }
+
+      const data = await response.json();
+      
+      if (!data.media || data.media.length === 0) {
+        throw new Error('No media found for this Instagram URL');
+      }
+
+      const mediaItem = data.media[0];
+      
+      return {
+        title: data.title || 'Instagram Video',
+        platform: 'Instagram',
+        thumbnail: data.thumbnail || '',
+        duration: '0:00', // Instagram API doesn't provide duration
+        channel: data.user?.username || 'Unknown User',
+        views: '0 views',
+        formats: [
+          {
+            format_id: 'mp4_hd',
+            ext: 'mp4',
+            quality: 'HD',
+            filesize: undefined
+          },
+          {
+            format_id: 'mp4_sd',
+            ext: 'mp4',
+            quality: 'SD',
+            filesize: undefined
+          }
+        ]
+      };
+    } catch (error) {
+      throw new Error(`Instagram analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   private async analyzeTikTokVideo(url: string): Promise<VideoInfo> {
     try {
       const rapidApiKey = process.env.RAPIDAPI_KEY || 'f91bd8b131mshfecb08b2a266b46p10db0cjsn3e18664df0d1';
@@ -214,9 +269,20 @@ export class VideoDownloader {
   }
 
   async analyzeVideo(url: string): Promise<VideoInfo> {
-    // Use yt-dlp for all platforms including TikTok
-    if (url.includes('tiktok.com')) {
+    // Use RapidAPI for TikTok
+    if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
       return this.analyzeTikTokVideo(url);
+    }
+
+    // For Instagram, try RapidAPI first as fallback
+    if (url.includes('instagram.com')) {
+      try {
+        return await this.analyzeInstagramVideo(url);
+      } catch (error) {
+        console.log('Instagram RapidAPI failed, trying yt-dlp:', error);
+        // Fallback to yt-dlp if RapidAPI fails
+        return this.analyzeWithYtDlp(url);
+      }
     }
 
     // Use yt-dlp for other platforms
@@ -232,8 +298,18 @@ export class VideoDownloader {
     await storage.updateDownload(downloadId, { status: 'downloading', progress: 0 });
 
     // Handle TikTok downloads with RapidAPI
-    if (url.includes('tiktok.com')) {
+    if (url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com')) {
       return this.downloadTikTokVideo(downloadId, url, format, quality);
+    }
+
+    // Handle Instagram downloads with RapidAPI
+    if (url.includes('instagram.com')) {
+      try {
+        return await this.downloadInstagramVideo(downloadId, url, format, quality);
+      } catch (error) {
+        console.log('Instagram RapidAPI download failed, trying yt-dlp:', error);
+        // Fallback to yt-dlp
+      }
     }
 
     // Use yt-dlp for other platforms
@@ -316,6 +392,72 @@ export class VideoDownloader {
       await storage.updateDownload(downloadId, {
         status: 'failed',
         errorMessage: `Failed to initialize download: ${error}`
+      });
+    }
+  }
+
+  private async downloadInstagramVideo(downloadId: string, url: string, format: string, quality: string): Promise<void> {
+    try {
+      const rapidApiKey = process.env.RAPIDAPI_KEY || 'f91bd8b131mshfecb08b2a266b46p10db0cjsn3e18664df0d1';
+      
+      await storage.updateDownload(downloadId, { progress: 20 });
+
+      const response = await fetch('https://instagram-downloader-download-instagram-videos-stories.p.rapidapi.com/index', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': rapidApiKey,
+          'X-RapidAPI-Host': 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com'
+        },
+        body: JSON.stringify({
+          url: url
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get Instagram video data');
+      }
+
+      const data = await response.json();
+      
+      if (!data.media || data.media.length === 0) {
+        throw new Error('No media found for this Instagram URL');
+      }
+
+      await storage.updateDownload(downloadId, { progress: 50 });
+
+      const mediaItem = data.media[0];
+      const downloadUrl = mediaItem.url;
+      
+      if (!downloadUrl) {
+        throw new Error('No download URL available for this Instagram video');
+      }
+
+      // Download the file
+      const fileResponse = await fetch(downloadUrl);
+      if (!fileResponse.ok) {
+        throw new Error('Failed to download Instagram video file');
+      }
+
+      await storage.updateDownload(downloadId, { progress: 75 });
+
+      const buffer = await fileResponse.arrayBuffer();
+      const fileExt = format === 'mp3' ? 'mp3' : 'mp4';
+      const filename = `${downloadId}.${fileExt}`;
+      const filePath = path.join(this.downloadsDir, filename);
+
+      await fs.writeFile(filePath, Buffer.from(buffer));
+
+      await storage.updateDownload(downloadId, {
+        status: 'completed',
+        progress: 100,
+        filePath: filePath
+      });
+
+    } catch (error) {
+      await storage.updateDownload(downloadId, {
+        status: 'failed',
+        errorMessage: `Instagram download failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
     }
   }

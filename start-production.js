@@ -8,17 +8,25 @@ console.log('Environment:', process.env.NODE_ENV || 'production');
 function installYtDlp() {
   console.log('Installing yt-dlp...');
   try {
-    // Try multiple installation methods
+    // Try multiple installation methods with proper PATH
     const methods = [
       'python3 -m pip install --user --upgrade yt-dlp',
       'pip3 install --user --upgrade yt-dlp',
-      'python -m pip install --user --upgrade yt-dlp'
+      'python -m pip install --user --upgrade yt-dlp',
+      '/usr/bin/python3 -m pip install --user --upgrade yt-dlp'
     ];
     
     for (const method of methods) {
       try {
         console.log(`Trying: ${method}`);
-        execSync(method, { stdio: 'pipe' });
+        execSync(method, { 
+          stdio: 'inherit',
+          env: { 
+            ...process.env, 
+            PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
+            PYTHONPATH: `${process.env.HOME}/.local/lib/python3.*/site-packages:${process.env.PYTHONPATH || ''}`
+          }
+        });
         console.log('Installation successful');
         return true;
       } catch (error) {
@@ -52,7 +60,12 @@ function startServer() {
   
   const server = spawn('node', [serverPath], {
     stdio: 'inherit',
-    env: { ...process.env, NODE_ENV: 'production' }
+    env: { 
+      ...process.env, 
+      NODE_ENV: 'production',
+      PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}`,
+      PYTHONPATH: `${process.env.HOME}/.local/lib/python3.*/site-packages:${process.env.PYTHONPATH || ''}`
+    }
   });
   
   server.on('error', (error) => {
